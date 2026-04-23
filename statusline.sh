@@ -55,8 +55,49 @@ esac
 
 EFFORT_SEG="⚡ ${EFFORT_COLOR}${EFFORT}${RESET}"
 
+# 5 小时 rate limit 用量进度条（字段缺失时整段隐藏）
+USAGE_SEG=""
+USED_RAW=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
+if [ -n "$USED_RAW" ]; then
+    USED=$(printf '%.0f' "$USED_RAW" 2>/dev/null || echo 0)
+    # 颜色：<60% 绿、60-85% 黄、>=85% 红
+    if   [ "$USED" -lt 60 ]; then USAGE_COLOR='\033[32m'
+    elif [ "$USED" -lt 85 ]; then USAGE_COLOR='\033[33m'
+    else                          USAGE_COLOR='\033[31m'
+    fi
+    # 10 段进度条，每段 10%
+    FILLED=$(( (USED + 5) / 10 ))
+    [ "$FILLED" -gt 10 ] && FILLED=10
+    [ "$FILLED" -lt 0  ] && FILLED=0
+    EMPTY=$(( 10 - FILLED ))
+    BAR=""
+    for _ in $(seq 1 "$FILLED"); do BAR="${BAR}▓"; done
+    for _ in $(seq 1 "$EMPTY");  do BAR="${BAR}░"; done
+    USAGE_SEG=" │ 📊 ${USAGE_COLOR}${BAR} ${USED}%${RESET} ${DIM}/5h${RESET}"
+fi
+
+# 本会话累计花费（仅在 API billing 模式下显示）
+# 订阅套餐的 cost.total_cost_usd 是按 API 估算的虚拟值、不是实际支出，显示出来会误导。
+# 判断依据：rate_limits 字段只在订阅套餐下填充，USED_RAW 非空即订阅模式，此时隐藏 cost。
+COST_SEG=""
+if [ -z "$USED_RAW" ]; then
+    COST_RAW=$(echo "$input" | jq -r '.cost.total_cost_usd // empty')
+    if [ -n "$COST_RAW" ]; then
+        # 转成整数分用于阈值比较（bash 不支持浮点比较）
+        COST_CENTS=$(awk -v c="$COST_RAW" 'BEGIN{printf "%d", c*100}')
+        # <$1 灰 / <$10 青 / <$50 黄 / >=$50 红
+        if   [ "$COST_CENTS" -lt 100 ]; then  COST_COLOR='\033[2m'
+        elif [ "$COST_CENTS" -lt 1000 ]; then COST_COLOR='\033[36m'
+        elif [ "$COST_CENTS" -lt 5000 ]; then COST_COLOR='\033[33m'
+        else                                  COST_COLOR='\033[31m'
+        fi
+        COST_FMT=$(printf '%.2f' "$COST_RAW")
+        COST_SEG=" │ 💰 ${COST_COLOR}\$${COST_FMT}${RESET}"
+    fi
+fi
+
 if [ -n "$BRANCH" ]; then
-    echo -e "${DIM}[$MODEL]${RESET} 🌿 ${CYAN}${BRANCH}${RESET} │ 🧠 ${COLOR}${REMAINING}% context left${RESET} │ ${EFFORT_SEG}"
+    echo -e "${DIM}[$MODEL]${RESET} 🌿 ${CYAN}${BRANCH}${RESET} │ 🧠 ${COLOR}${REMAINING}% context left${RESET} │ ${EFFORT_SEG}${USAGE_SEG}${COST_SEG}"
 else
-    echo -e "${DIM}[$MODEL]${RESET} 🧠 ${COLOR}${REMAINING}% context left${RESET} │ ${EFFORT_SEG}"
+    echo -e "${DIM}[$MODEL]${RESET} 🧠 ${COLOR}${REMAINING}% context left${RESET} │ ${EFFORT_SEG}${USAGE_SEG}${COST_SEG}"
 fi
